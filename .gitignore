@@ -121,3 +121,6 @@ dmypy.json
 
 # VS Code settings specific to the workspace
 .vscode/
+
+# Data
+/data/
