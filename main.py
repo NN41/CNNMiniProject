@@ -59,7 +59,7 @@ next(iter(train_dataloader))[0].shape # must be of shape (N, C, H, W)
 # std_for_normalization = torch.std(data_for_normalization).item() # = 0.30810782313346863
 # print(f'The mean and std of the pixel values over the training data is mean {mean_for_normalization} and std {std_for_normalization}')
 
-# %%
+# %% define model
 
 class CNN(nn.Module):
     def __init__(self):
@@ -77,7 +77,66 @@ class CNN(nn.Module):
         x = self.fc1(x)
         return x # note that x are logits
 
-model = CNN()
-X, y = next(iter(train_dataloader))
 
+# %% train model
 
+model = CNN().to(device)
+# model.named_parameters()
+
+# %%
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0)
+
+n_batches = len(train_dataloader)
+running_loss = 0
+running_n_batches = 0
+EPOCHS = 5
+
+model.train()
+for epoch in range(EPOCHS):
+    for batch, (X, y) in enumerate(train_dataloader):
+
+        X = X.to(device)
+        y = y.to(device)
+
+        # perform forward pass and compute loss
+        logits = model(X)
+        loss = criterion(logits, y)
+
+        # perform back-prop and update params
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # compute and print statistics
+        running_loss += loss
+        running_n_batches += 1
+        if batch % 300 == 0:
+            print(f"epoch {epoch+1:3d} / {EPOCHS} | batch {batch+1:5d} / {n_batches} | loss {loss.item():.5f} | running loss {running_loss.item() / running_n_batches:.5f}")
+            running_loss = 0
+            running_n_batches = 0
+print("Finished Training!")
+
+# %%
+
+running_loss = 0
+accuracy = 0
+n_correct = 0
+n_examples = 0
+
+model.eval()
+with torch.no_grad():
+    for batch, (X, y) in enumerate(test_dataloader):
+        X, y = X.to(device), y.to(device)
+        logits = model(X)
+        batch_loss = criterion(logits, y)
+        running_loss += batch_loss.item() * len(y)
+        n_examples += len(y)
+        n_correct += (logits.argmax(dim=1) == y).sum().item()
+        # if batch % 100 == 0:
+        #     print(f"batch {batch+1:5d} / {len(test_dataloader)}")
+
+accuracy = n_correct / n_examples
+loss = running_loss / n_examples
+
+print(f"Test error: loss = {loss:.5f}, accuracy = {accuracy*100:.2f}%\n")
