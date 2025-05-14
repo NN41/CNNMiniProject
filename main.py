@@ -8,6 +8,8 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset, random_split
 import torch.nn as nn
+import torch.nn.functional as F
+
 from torchvision import datasets
 from torchvision.transforms import transforms
 
@@ -47,6 +49,7 @@ for i in range(len(axes)):
 train_dataloader = DataLoader(training_data, batch_size=32, shuffle=True)
 test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
 
+next(iter(train_dataloader))[0].shape # must be of shape (N, C, H, W)
 
 # %%
 
@@ -56,4 +59,25 @@ test_dataloader = DataLoader(test_data, batch_size=32, shuffle=True)
 # std_for_normalization = torch.std(data_for_normalization).item() # = 0.30810782313346863
 # print(f'The mean and std of the pixel values over the training data is mean {mean_for_normalization} and std {std_for_normalization}')
 
-training_data[0]
+# %%
+
+class CNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=4, kernel_size=3, padding='same')
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.fc1 = nn.Linear(in_features=4*14*14, out_features=10)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = self.pool(x)
+        x = torch.flatten(x, start_dim=1) # flatten all dimensions except batch
+        x = self.fc1(x)
+        return x # note that x are logits
+
+model = CNN()
+X, y = next(iter(train_dataloader))
+
+
