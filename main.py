@@ -186,7 +186,7 @@ def visualize_kernel_weights(layer, layer_name):
 visualize_kernel_weights(model.conv1, "Conv1")
 visualize_kernel_weights(model.conv2, "Conv2")
 
-# %% register hooks for visualizing feature maps (activations)
+# %%
 
 activations = {}
 def get_activation(name):
@@ -198,34 +198,43 @@ model.relu1.register_forward_hook(get_activation('relu1_out'))
 model.relu2.register_forward_hook(get_activation('relu2_out'))
 
 sample_idx = 9
-sample_image, label = test_data[sample_idx]
-sample_image_for_model = sample_image.unsqueeze(0).to(device)
-sample_image_for_plot = sample_image.squeeze(0)
-plt.imshow(sample_image_for_plot, cmap='gray')
+batch = next(iter(test_dataloader))
+sample_images, sample_labels = batch
+sample_images = sample_images[sample_idx:sample_idx+3]
+sample_labels =  sample_labels[sample_idx:sample_idx+3]
+
+rows = 4
+cols = 1
+fig, axes = plt.subplots(1,3, figsize=(6,6))
+axes = axes.flatten()
+for i in range(len(sample_images)):
+    img = sample_images[i].squeeze(0)
+    axes[i].imshow(img, cmap='gray')
+    axes[i].set_title(sample_labels[i].item())
+    axes[i].set_xticks([])
+    axes[i].set_yticks([])
 
 model.eval()
 with torch.no_grad():
-    model(sample_image_for_model)
-
-# %%
-
-layer_name = 'relu1_out'
-layer_activations = activations[layer_name]
+    model(sample_images.to(device))
 
 def visualize_activations(activations_dict, layer_name):
     all_activations = activations_dict[layer_name] # of shape (batch_size, num_channels, img_H, img_W)
     num_channels = all_activations.shape[1]
+    num_samples = all_activations.shape[0]
 
-    rows = 1
+    rows = num_samples
     cols = num_channels
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
     axes = axes.flatten()
-    for idx_channel in range(num_channels):
-        activation_map = all_activations[0, idx_channel].cpu()
-        axes[idx_channel].imshow(activation_map, cmap='gray')
-        axes[idx_channel].set_xticks([])
-        axes[idx_channel].set_yticks([])
-        axes[idx_channel].set_title(f"{layer_name} | chan {idx_channel}")
+    for idx_sample in range(num_samples):
+        for idx_channel in range(num_channels):
+            i = (idx_sample * num_channels) + idx_channel
+            activation_map = all_activations[idx_sample, idx_channel].cpu()
+            axes[i].imshow(activation_map, cmap='gray')
+            axes[i].set_xticks([])
+            axes[i].set_yticks([])
+            axes[i].set_title(f"{layer_name} | chan {idx_channel}")
 
 visualize_activations(activations, 'relu1_out')
 visualize_activations(activations, 'relu2_out')
