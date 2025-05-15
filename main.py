@@ -42,7 +42,7 @@ axes = axes.flatten()
 for i in range(len(axes)):
     sample_idx = torch.randint(len(training_data), size=(1,)).item()
     img, label = training_data[sample_idx]
-    axes[i].imshow(img.squeeze(), cmap="gray")
+    axes[i].imshow(img.squeeze(0), cmap="gray")
     axes[i].axis("off")
     axes[i].set_title(str(label))
 
@@ -68,7 +68,7 @@ class CNN(nn.Module):
         self.conv1 = nn.Conv2d(in_channels=1, out_channels=4, kernel_size=3, padding='same')
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.relu1 = nn.ReLU()
-        self.conv2 = nn.Conv2d(in_channels=3, out_channels=4, kernel_size=3, padding='same')
+        self.conv2 = nn.Conv2d(in_channels=4, out_channels=4, kernel_size=3, padding='same')
         self.relu2 = nn.ReLU()
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.fc = nn.Linear(in_features=4*7*7, out_features=10) # in_features depends on channels of last conv layer and the strides used in pooling
@@ -80,8 +80,10 @@ class CNN(nn.Module):
         x = self.fc(x)
         return x # note that x are logits
 
-# XX, yy = next(iter(train_dataloader))
-# CNN()(XX).shape
+model = CNN().to(device)
+XX, _ = next(iter(train_dataloader))
+model(XX.to(device)).shape
+model
 
 # %%
 
@@ -108,20 +110,15 @@ def test(dataloader, model, criterion):
     print(f"Test error: loss = {loss:.5f}, accuracy = {accuracy*100:.2f}%\n")
     model.train()
 
-# %% initialize model
-
-model = CNN().to(device)
-model
-
 # %% train model
 
 criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 n_batches = len(train_dataloader)
 running_loss = 0
 running_n_batches = 0
-EPOCHS = 10
+EPOCHS = 5
 
 
 test(train_dataloader, model, criterion)
@@ -184,19 +181,23 @@ def visualize_kernel_weights(layer, layer_name):
     plt.show()
 
 visualize_kernel_weights(model.conv1, "Conv1")
-visualize_kernel_weights(model.conv2, "Conv2")
+# visualize_kernel_weights(model.conv2, "Conv2")
 
 # %% visualize feature maps (activations)
 
+# --- set up hooks for activation maps ---
 activations = {}
 def get_activation(name):
     def hook(model, input, output):
         activations[name] = output.detach()
     return hook
 
-model.relu1.register_forward_hook(get_activation('relu1_out'))
-model.relu2.register_forward_hook(get_activation('relu2_out'))
+# --- register hooks ---
+handles = []
+handles.append(model.relu1.register_forward_hook(get_activation('relu1_out')))
+handles.append(model.relu2.register_forward_hook(get_activation('relu2_out')))
 
+# --- get sample data for activation maps ---
 sample_idx = 9
 batch = next(iter(test_dataloader))
 sample_images, sample_labels = batch
@@ -214,10 +215,12 @@ for i in range(len(sample_images)):
     axes[i].set_xticks([])
     axes[i].set_yticks([])
 
-model.eval()
+# --- perform forward pass using sample data ---
 with torch.no_grad():
+    model.eval()
     model(sample_images.to(device))
 
+# --- define function for visualizing activation maps ---
 def visualize_activations(activations_dict, layer_name):
     all_activations = activations_dict[layer_name] # of shape (batch_size, num_channels, img_H, img_W)
     num_kernels = all_activations.shape[1]
@@ -235,6 +238,91 @@ def visualize_activations(activations_dict, layer_name):
             ax.set_title(f"sample {idx_sample} | ker {idx_kernel}")
     fig.suptitle(f'Activations of kernels (rows) \nper sample (cols) for layer {layer_name}\n')
 
+# --- plot activation maps ---
 visualize_activations(activations, 'relu1_out')
 visualize_activations(activations, 'relu2_out')
+
+# --- remove hooks ---
+for handle in handles:
+    handle.remove()
+activations = {}
+
+# %% feature visualization by maximizing activations
+
+model.eval()
+
+# target_layers = [model.relu1, model.relu2]
+
+# target_layer_idx = 0
+# target_layer = target_layers[target_layer_idx]
+idx_target_channel = 0
+target_layer = model.conv2
+layer_name = target_layer.__class__.__name__
+
+height = width = 28
+num_samples = 1
+num_channels = 1
+opt_img = torch.rand(num_samples, num_channels, height, width, device=device, requires_grad=True)
+with torch.no_grad():
+    opt_img.data = (opt_img.data - opt_img.mean()) / opt_img.std()
+plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
+
+img_optimizer = torch.optim.Adam(
+    [opt_img], 
+    lr=0.005,
+    weight_decay=1e-3
+)
+
+activation_store = {}
+def hook(module, input, output):
+    activation_store[layer_name] = output
+hook_handle = target_layer.register_forward_hook(hook)
+
+
+iterations = 5000
+
+for i in range(iterations):
+
+    model(opt_img)
+    layer_activation = activation_store[layer_name]
+    channel_activation = layer_activation[0, idx_target_channel]
+
+    objective = channel_activation.mean()
+    loss = -objective
     
+    img_optimizer.zero_grad()
+    loss.backward()
+    img_optimizer.step()
+
+    with torch.no_grad():
+        opt_img.data = torch.clamp(opt_img.data, -5, 5)
+        # opt_img.data = (opt_img.data - opt_img.mean()) / opt_img.std()
+        # opt_img.data = nn.Tanh()(opt_img.data)
+        
+    if i % 100 == 0:
+        with torch.no_grad():
+            noise = torch.rand(num_samples, num_channels, height, width, device=device) * 0.02
+            opt_img.data = opt_img.data + noise.data
+
+    if i % 500 == 0:
+        print(f"iteration {i+1} / {iterations} | loss = {loss.item()}")
+        plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
+        plt.show()
+
+
+hook_handle.remove()
+activation_store.clear()
+
+plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
+
+# %%
+opt_img.min(), opt_img.max()
+# %%
+
+opt_img
+
+noise = torch.rand(num_samples, num_channels, height, width, device=device) * 0.1
+
+
+
+opt_img
