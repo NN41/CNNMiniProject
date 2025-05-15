@@ -65,10 +65,10 @@ class CNN(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=3, kernel_size=4, padding='same')
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=4, kernel_size=3, padding='same')
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.relu1 = nn.ReLU()
-        self.conv2 = nn.Conv2d(in_channels=3, out_channels=4, kernel_size=4, padding='same')
+        self.conv2 = nn.Conv2d(in_channels=3, out_channels=4, kernel_size=3, padding='same')
         self.relu2 = nn.ReLU()
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.fc = nn.Linear(in_features=4*7*7, out_features=10) # in_features depends on channels of last conv layer and the strides used in pooling
@@ -121,7 +121,7 @@ optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0)
 n_batches = len(train_dataloader)
 running_loss = 0
 running_n_batches = 0
-EPOCHS = 5
+EPOCHS = 10
 
 
 test(train_dataloader, model, criterion)
@@ -186,7 +186,7 @@ def visualize_kernel_weights(layer, layer_name):
 visualize_kernel_weights(model.conv1, "Conv1")
 visualize_kernel_weights(model.conv2, "Conv2")
 
-# %%
+# %% visualize feature maps (activations)
 
 activations = {}
 def get_activation(name):
@@ -220,21 +220,20 @@ with torch.no_grad():
 
 def visualize_activations(activations_dict, layer_name):
     all_activations = activations_dict[layer_name] # of shape (batch_size, num_channels, img_H, img_W)
-    num_channels = all_activations.shape[1]
+    num_kernels = all_activations.shape[1]
     num_samples = all_activations.shape[0]
-
-    rows = num_samples
-    cols = num_channels
+    cols = num_samples
+    rows = num_kernels
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
-    axes = axes.flatten()
     for idx_sample in range(num_samples):
-        for idx_channel in range(num_channels):
-            i = (idx_sample * num_channels) + idx_channel
-            activation_map = all_activations[idx_sample, idx_channel].cpu()
-            axes[i].imshow(activation_map, cmap='gray')
-            axes[i].set_xticks([])
-            axes[i].set_yticks([])
-            axes[i].set_title(f"{layer_name} | chan {idx_channel}")
+        for idx_kernel in range(num_kernels):
+            activation_map = all_activations[idx_sample, idx_kernel].cpu()
+            ax = axes[idx_kernel, idx_sample]
+            ax.imshow(activation_map, cmap='gray')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(f"sample {idx_sample} | ker {idx_kernel}")
+    fig.suptitle(f'Activations of kernels (rows) \nper sample (cols) for layer {layer_name}\n')
 
 visualize_activations(activations, 'relu1_out')
 visualize_activations(activations, 'relu2_out')
