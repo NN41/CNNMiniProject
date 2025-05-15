@@ -118,7 +118,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 n_batches = len(train_dataloader)
 running_loss = 0
 running_n_batches = 0
-EPOCHS = 5
+EPOCHS = 25
 
 
 test(train_dataloader, model, criterion)
@@ -250,79 +250,96 @@ activations = {}
 # %% feature visualization by maximizing activations
 
 model.eval()
-
+verbose = False
 # target_layers = [model.relu1, model.relu2]
 
 # target_layer_idx = 0
 # target_layer = target_layers[target_layer_idx]
-idx_target_channel = 0
+idx_target_channel = 1
 target_layer = model.conv2
-layer_name = target_layer.__class__.__name__
 
-height = width = 28
-num_samples = 1
-num_channels = 1
-opt_img = torch.rand(num_samples, num_channels, height, width, device=device, requires_grad=True)
-with torch.no_grad():
-    opt_img.data = (opt_img.data - opt_img.mean()) / opt_img.std()
-plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
+def find_activation_maximizer(target_layer, idx_target_channel):
 
-img_optimizer = torch.optim.Adam(
-    [opt_img], 
-    lr=0.005,
-    weight_decay=1e-3
-)
-
-activation_store = {}
-def hook(module, input, output):
-    activation_store[layer_name] = output
-hook_handle = target_layer.register_forward_hook(hook)
-
-
-iterations = 5000
-
-for i in range(iterations):
-
-    model(opt_img)
-    layer_activation = activation_store[layer_name]
-    channel_activation = layer_activation[0, idx_target_channel]
-
-    objective = channel_activation.mean()
-    loss = -objective
-    
-    img_optimizer.zero_grad()
-    loss.backward()
-    img_optimizer.step()
-
+    height = width = 28
+    num_samples = 1
+    num_channels = 1
+    opt_img = torch.rand(num_samples, num_channels, height, width, device=device, requires_grad=True)
     with torch.no_grad():
-        opt_img.data = torch.clamp(opt_img.data, -5, 5)
-        # opt_img.data = (opt_img.data - opt_img.mean()) / opt_img.std()
-        # opt_img.data = nn.Tanh()(opt_img.data)
+        opt_img.data = (opt_img.data - opt_img.mean()) / opt_img.std()
+    plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
+
+    img_optimizer = torch.optim.Adam(
+        [opt_img], 
+        lr=0.005,
+        weight_decay=1e-3
+    )
+
+    layer_name = target_layer.__class__.__name__
+    activation_store = {}
+    def hook(module, input, output):
+        activation_store[layer_name] = output
+    hook_handle = target_layer.register_forward_hook(hook)
+
+
+    iterations = 5000
+
+    for i in range(iterations):
+
+        model(opt_img)
+        layer_activation = activation_store[layer_name]
+        channel_activation = layer_activation[0, idx_target_channel]
+
+        objective = channel_activation.mean()
+        loss = -objective
         
-    if i % 100 == 0:
+        img_optimizer.zero_grad()
+        loss.backward()
+        img_optimizer.step()
+
         with torch.no_grad():
-            noise = torch.rand(num_samples, num_channels, height, width, device=device) * 0.02
-            opt_img.data = opt_img.data + noise.data
+            opt_img.data = torch.clamp(opt_img.data, -5, 5)
+            # opt_img.data = nn.Tanh()(opt_img.data)
+            
+        if i % 100 == 0:
+            with torch.no_grad():
+                noise = torch.rand(num_samples, num_channels, height, width, device=device) * 0.05
+                opt_img.data = opt_img.data + noise.data
 
-    if i % 500 == 0:
-        print(f"iteration {i+1} / {iterations} | loss = {loss.item()}")
-        plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
-        plt.show()
+        if i % 500 == 0 and verbose:
+            print(f"iteration {i+1} / {iterations} | loss = {loss.item()}")
+            plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
+            plt.show()
 
 
-hook_handle.remove()
-activation_store.clear()
+    hook_handle.remove()
+    activation_store.clear()
 
-plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
+    return opt_img
+
+# opt_img = find_activation_maximizer(target_layer, idx_target_channel)
+# plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
 
 # %%
-opt_img.min(), opt_img.max()
-# %%
 
-opt_img
+layers = {'conv1': model.conv1, 'conv2': model.conv2}
+optimal_images = []
+label_names = []
 
-noise = torch.rand(num_samples, num_channels, height, width, device=device) * 0.1
+for name, target_layer in layers.items():
+    num_channels = target_layer.weight.shape[0]
+    for idx_target_channel in range(num_channels):
+        label_name = f"{name}: chan {idx_target_channel}"
+        label_names.append(label_name)
+        print(f"optimizing image for {label_name}")
+        opt_img = find_activation_maximizer(target_layer, idx_target_channel)
+        optimal_images.append(opt_img)
 
-
-
-opt_img
+rows = 2
+cols = 4
+fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
+axes = axes.flatten()
+for i, img in enumerate(optimal_images):
+    axes[i].imshow(img.detach().cpu().squeeze(), cmap='gray')
+    axes[i].set_xticks([])
+    axes[i].set_yticks([])
+    axes[i].set_title(label_names[i])
