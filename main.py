@@ -65,33 +65,66 @@ class CNN(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=4, kernel_size=3, padding='same')
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.fc1 = nn.Linear(in_features=4*14*14, out_features=10)
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=4, kernel_size=5, padding='same')
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.relu1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(in_channels=4, out_channels=4, kernel_size=5, padding='same')
+        self.relu2 = nn.ReLU()
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.fc = nn.Linear(in_features=4*7*7, out_features=10) # in_features depends on channels of last conv layer and the strides used in pooling
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.pool(x)
+        x = self.pool1(self.relu1(self.conv1(x)))
+        x = self.pool2(self.relu2(self.conv2(x)))
         x = torch.flatten(x, start_dim=1) # flatten all dimensions except batch
-        x = self.fc1(x)
+        x = self.fc(x)
         return x # note that x are logits
 
+# XX, yy = next(iter(train_dataloader))
+# CNN()(XX).shape
+
+# %%
+
+def test(dataloader, model, criterion):
+    running_loss = 0
+    accuracy = 0
+    n_correct = 0
+    n_examples = 0
+
+    model.eval()
+    with torch.no_grad():
+        for batch, (X, y) in enumerate(dataloader):
+            X, y = X.to(device), y.to(device)
+            logits = model(X)
+            batch_loss = criterion(logits, y)
+            running_loss += batch_loss.item() * len(y)
+            n_examples += len(y)
+            n_correct += (logits.argmax(dim=1) == y).sum().item()
+            # if batch % 100 == 0:
+            #     print(f"batch {batch+1:5d} / {len(dataloader)}")
+
+    accuracy = n_correct / n_examples
+    loss = running_loss / n_examples
+    print(f"Test error: loss = {loss:.5f}, accuracy = {accuracy*100:.2f}%\n")
+    model.train()
+
+# %% initialize model
+
+model = CNN().to(device)
+model
 
 # %% train model
 
-model = CNN().to(device)
-# model.named_parameters()
-
-# %%
 criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0)
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0)
 
 n_batches = len(train_dataloader)
 running_loss = 0
 running_n_batches = 0
-EPOCHS = 5
+EPOCHS = 10
 
+
+test(train_dataloader, model, criterion)
 model.train()
 for epoch in range(EPOCHS):
     for batch, (X, y) in enumerate(train_dataloader):
@@ -112,31 +145,43 @@ for epoch in range(EPOCHS):
         running_loss += loss
         running_n_batches += 1
         if batch % 300 == 0:
-            print(f"epoch {epoch+1:3d} / {EPOCHS} | batch {batch+1:5d} / {n_batches} | loss {loss.item():.5f} | running loss {running_loss.item() / running_n_batches:.5f}")
+            print(f"epoch {epoch+1:3d} / {EPOCHS} | batch {batch+1:5d} / {n_batches} | avg loss between updates {running_loss.item() / running_n_batches:.5f}")
             running_loss = 0
             running_n_batches = 0
+
+    test(train_dataloader, model, criterion)
 print("Finished Training!")
 
 # %%
 
-running_loss = 0
-accuracy = 0
-n_correct = 0
-n_examples = 0
+def visualize_kernel_weights(layer, layer_name):
+    weights_all = layer.weight.data.clone().to("cpu") # of shape (out_channels, in_channels, k_H, k_W)
 
-model.eval()
-with torch.no_grad():
-    for batch, (X, y) in enumerate(test_dataloader):
-        X, y = X.to(device), y.to(device)
-        logits = model(X)
-        batch_loss = criterion(logits, y)
-        running_loss += batch_loss.item() * len(y)
-        n_examples += len(y)
-        n_correct += (logits.argmax(dim=1) == y).sum().item()
-        # if batch % 100 == 0:
-        #     print(f"batch {batch+1:5d} / {len(test_dataloader)}")
+    num_kernels = weights_all.shape[0]
+    num_in_channels = weights_all.shape[1]
 
-accuracy = n_correct / n_examples
-loss = running_loss / n_examples
+    weights_to_plot = []
 
-print(f"Test error: loss = {loss:.5f}, accuracy = {accuracy*100:.2f}%\n")
+    for idx_kernel in range(num_kernels):
+        for idx_channel in range(num_in_channels):
+            kernel = weights_all[idx_kernel]
+            weights = kernel[idx_channel]
+            name_to_display = f"ker {idx_kernel}: chan {idx_channel}"
+            weights_to_display = (weights - weights.min()) / (weights.max() - weights.min())
+            weights_to_plot.append([name_to_display, weights_to_display])
+
+    cols = num_kernels
+    rows = num_in_channels
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
+    axes = axes.flatten()
+    for i in range(cols * rows):
+        name, weights = weights_to_plot[i]
+        axes[i].imshow(weights, cmap="gray")
+        axes[i].set_xticks([])
+        axes[i].set_yticks([])
+        axes[i].set_title(name)
+    fig.suptitle(f"{layer_name} kernels")
+    plt.show()
+
+visualize_kernel_weights(model.conv1, "Conv1")
+visualize_kernel_weights(model.conv2, "Conv2")
