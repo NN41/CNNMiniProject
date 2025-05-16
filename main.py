@@ -118,7 +118,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 n_batches = len(train_dataloader)
 running_loss = 0
 running_n_batches = 0
-EPOCHS = 25
+EPOCHS = 10
 
 
 test(train_dataloader, model, criterion)
@@ -249,23 +249,15 @@ activations = {}
 
 # %% feature visualization by maximizing activations
 
-model.eval()
-verbose = False
-# target_layers = [model.relu1, model.relu2]
 
-# target_layer_idx = 0
-# target_layer = target_layers[target_layer_idx]
-idx_target_channel = 1
-target_layer = model.conv2
+def find_activation_maximizer(target_layer, idx_target_channel, verbose=False):
 
-def find_activation_maximizer(target_layer, idx_target_channel):
+    model.eval()
 
     height = width = 28
     num_samples = 1
     num_channels = 1
     opt_img = torch.rand(num_samples, num_channels, height, width, device=device, requires_grad=True)
-    with torch.no_grad():
-        opt_img.data = (opt_img.data - opt_img.mean()) / opt_img.std()
     plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
 
     img_optimizer = torch.optim.Adam(
@@ -280,15 +272,16 @@ def find_activation_maximizer(target_layer, idx_target_channel):
         activation_store[layer_name] = output
     hook_handle = target_layer.register_forward_hook(hook)
 
-
-    iterations = 5000
-
+    iterations = 10000
+    prev_loss = 1e6
+    threshold_abs_pct_change = 0.005
+    
     for i in range(iterations):
 
         model(opt_img)
         layer_activation = activation_store[layer_name]
         channel_activation = layer_activation[0, idx_target_channel]
-
+        
         objective = channel_activation.mean()
         loss = -objective
         
@@ -305,6 +298,14 @@ def find_activation_maximizer(target_layer, idx_target_channel):
                 noise = torch.rand(num_samples, num_channels, height, width, device=device) * 0.05
                 opt_img.data = opt_img.data + noise.data
 
+        if i % 250 == 0:
+            curr_loss = loss.item()
+            abs_change = abs(curr_loss / prev_loss - 1)
+            if abs_change < threshold_abs_pct_change:
+                print(f"early stop triggered at iteration {i}")
+                return opt_img
+            prev_loss = curr_loss
+
         if i % 500 == 0 and verbose:
             print(f"iteration {i+1} / {iterations} | loss = {loss.item()}")
             plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
@@ -316,17 +317,21 @@ def find_activation_maximizer(target_layer, idx_target_channel):
 
     return opt_img
 
-# opt_img = find_activation_maximizer(target_layer, idx_target_channel)
+target_layer = model.fc
+idx_target_channel = 0
+opt_img = find_activation_maximizer(target_layer, idx_target_channel, verbose=True)
 # plt.imshow(opt_img.squeeze().cpu().detach().numpy(), cmap='gray')
 
 # %%
 
-layers = {'conv1': model.conv1, 'conv2': model.conv2}
+layers = {'conv1': model.conv1, 'conv2': model.conv2, 'fc': model.fc}
 optimal_images = []
 label_names = []
 
+total_channels = 0
 for name, target_layer in layers.items():
     num_channels = target_layer.weight.shape[0]
+    total_channels += num_channels
     for idx_target_channel in range(num_channels):
         label_name = f"{name}: chan {idx_target_channel}"
         label_names.append(label_name)
@@ -334,8 +339,8 @@ for name, target_layer in layers.items():
         opt_img = find_activation_maximizer(target_layer, idx_target_channel)
         optimal_images.append(opt_img)
 
-rows = 2
 cols = 4
+rows = (total_channels + cols) // cols
 fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3))
 axes = axes.flatten()
 for i, img in enumerate(optimal_images):
